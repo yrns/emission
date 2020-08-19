@@ -162,18 +162,27 @@ pub fn initialize_buffers<B: hal::Backend>(
     let e1 = Emitter {
         position: [0.0, 0.0, 0.0, 0.0],
         gen: 1,
-        spawn_rate: 50.0, // (/ 1.0 1000.0)
+        spawn_rate: 50.0,
         lifetime: 0.5,
-        max_particles: 100,
-        spawn_offset_min: [-0.5, 0.0, 0.0, 0.0],
-        spawn_offset_max: [0.5, 0.0, 0.0, 0.0],
+        max_particles: 32,
+        spawn_offset_min: [-0.2, 0.0, 0.0, 0.0],
+        spawn_offset_max: [0.2, 0.0, 0.0, 0.0],
         accel: [0.0, -4.0, 0.0, 0.0],
         scale: [1.0, 1.0, 1.0, 0.0],
-        color: [0.0, 0.0, 1.0, 1.0],
+        color: [1.0, 0.2, 0.3, 0.8],
         ..Default::default()
     };
 
-    let emitter_data = vec![e1];
+    let e2 = Emitter {
+        position: [0.0, 0.2, 0.0, 0.0],
+        spawn_offset_min: [-0.5, 0.0, 0.0, 0.0],
+        spawn_offset_max: [0.5, 0.0, 0.0, 0.0],
+        accel: [0.1, -2.0, 0.0, 0.0],
+        color: [0.4, 0.2, 0.3, 0.5],
+        ..e1
+    };
+
+    let emitter_data = vec![e1, e2];
 
     unsafe {
         factory.upload_buffer(
