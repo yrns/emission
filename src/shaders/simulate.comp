@@ -1,0 +1,240 @@
+#version 450
+
+// TODO: Add more interesting functions of time for particle
+// parameters like parametric curves, noise, randomness.
+struct LinearRange {
+    float start;
+    float end;
+};
+
+struct LinearRange3 {
+    vec3 start;
+    vec3 end;
+};
+
+struct Emitter {
+    //mat4 transform;
+    vec4 position;
+    // Generation is used to tell if an emitter has been replaced/updated.
+    // Use entity id?
+    uint gen;
+    float spawn_rate;    
+    float lifetime;
+    // max particles can't change then?
+    uint max_particles;
+    // the index of the first particle in the instance buffer
+    //uint index;
+    vec4 spawn_offset_min;    
+    vec4 spawn_offset_max;
+    vec4 accel;
+    vec4 scale;
+    vec4 color;
+    //uint _pad;
+};
+
+struct EmitterState {
+    // Current generation of this emitters particles.
+    uint gen;
+    uint num;
+    uint new;
+    float last_spawn;
+    float t;
+    uint reset;
+    uint _pad;
+};
+
+struct DrawIndirectCommand {
+    uint vertex_count;
+    uint instance_count;
+    uint first_vertex;
+    uint first_instance;
+};
+
+struct Particle {
+    //mat4 local;
+    vec4 color;
+    vec4 position;
+    vec4 velocity;    
+    float lifetime;
+    uint emitter;
+    uint gen;
+    uint _pad;
+};
+
+layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+// env for culling?
+// layout (std430, set = 0, binding = 0) uniform Env? {
+// };
+
+layout (std430, set = 0, binding = 0) readonly buffer Emitters {
+    Emitter emitters[];
+};
+
+layout (std430, set = 0, binding = 1) buffer EmittersState {
+    //uint num_particles;
+    EmitterState emitters[];
+} state;
+
+layout (std430, set = 0, binding = 2) buffer Particles {
+    Particle particles[];
+};
+
+layout (set = 0, binding = 3) writeonly buffer DrawCommands {
+    DrawIndirectCommand draws[];
+};
+
+layout (set = 0, binding = 4) writeonly buffer Stats {
+    uint num_particles;
+    //uint debug1;
+};
+
+// rendy doesn't do push constants for compute
+// layout (push_constant) uniform PushConsts {
+//     float dt;
+// };
+
+// Number of particles left to spawn. If it's zero we can stop
+// checking for this work group.
+//shared uint new;
+
+float random(in vec2 st) {
+    return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
+}
+
+void new_particle(uint index, uint emitter) {
+    Emitter e = emitters[emitter];
+    Particle p;
+
+    //p.local = e.transform;
+    p.color = e.color;
+
+    float t = state.emitters[emitter].t;
+    float r1 = random(vec2(t + index / 64 * .01, t));
+    float r2 = random(vec2(t + index / 64 * .03, t));
+    float r3 = random(vec2(t + index / 64 * .05, t));
+    vec3 r = vec3(r1, r2, r3);
+    vec3 offset = mix(e.spawn_offset_min.xyz, e.spawn_offset_max.xyz, r);
+    
+    p.position.xyz = e.position.xyz + offset;
+    p.velocity.xyz = vec3(0.0);
+    p.lifetime = e.lifetime;
+    p.emitter = emitter;
+    p.gen = e.gen;
+
+    particles[index] = p;
+}
+
+bool simulate_particle(uint index, uint emitter, float dt) {
+    Particle p = particles[index];
+    Emitter e = emitters[emitter];
+
+    p.lifetime -= dt;
+    
+    float t = 1.0 - max(p.lifetime / e.lifetime, 0.0);    
+    p.color = vec4(e.color.rgb, smoothstep(e.color.a, 0.0, t));    
+    p.velocity.xyz += e.accel.xyz * dt;
+    p.position += p.velocity * dt;
+
+    particles[index] = p;
+
+    return p.lifetime > 0.0;
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+
+    // FIX
+    float dt = 0.01;
+
+    // Update emitter state. We could do this with a separate compute
+    // shader. Add emitter count to uniforms. TODO:
+    if (index < emitters.length()) {
+        uint gen = emitters[index].gen;
+        if (gen > 0) {
+            // Initialize emitter state.
+            if (state.emitters[index].gen != gen) {
+                state.emitters[index].gen = gen;
+                state.emitters[index].num = 0;
+                state.emitters[index].new = 0;
+                state.emitters[index].last_spawn = 0.0;
+                state.emitters[index].reset = 1;
+                state.emitters[index].t = 0.0;
+            } else {
+                // Unset this from last run.
+                state.emitters[index].reset = 0;
+            }
+            
+            // Determine the number of new particles to spawn for each emitter.
+            float last_spawn = state.emitters[index].last_spawn + dt;
+            // Turn particles per second into seconds per particle.
+            float spawn_rate = 1.0 / emitters[index].spawn_rate;
+            uint maxp = emitters[index].max_particles;
+            uint num = state.emitters[index].num;
+            // Can we have new left over?
+            uint new = state.emitters[index].new;
+            while (last_spawn >= spawn_rate) {
+                last_spawn -= spawn_rate;
+                if ((num + new) < maxp)
+                    new++;
+            }
+            state.emitters[index].last_spawn = last_spawn;
+            state.emitters[index].new = new;            
+            state.emitters[index].t += dt;
+        }
+    }
+
+    barrier();
+
+    // Check if we need to spawn a new particle at this index.
+    uint emitter_index = particles[index].emitter;
+
+    bool expired = particles[index].lifetime <= 0.0;
+    
+    // If this particle was for an emitter that was reset, meaning the
+    // generation changed, kill it. If this particle is uninitialized
+    // the emitter index will be zero, but so will the lifetime.
+    bool reset = state.emitters[emitter_index].reset == 1;
+    if (reset) {
+        particles[index].lifetime = 0.0;
+        particles[index].color = vec4(1.0, 0.0, 0.0, 1.0);
+    }
+
+    bool new = false;
+
+    if (expired || reset) {    
+        // need emitter count: FIX
+        for (uint i = 0; i < state.emitters.length(); i++) {
+            if (state.emitters[i].gen > 0) {
+                // There is no atomic read?
+                uint n = state.emitters[i].new;
+                if (n > 0 && atomicCompSwap(state.emitters[i].new, n, n - 1) == n) {
+                    // Spawn new particle for this emitter.
+                    new_particle(index, i);
+                    if (expired) {
+                        atomicAdd(state.emitters[i].num, 1);
+                        atomicAdd(num_particles, 1);
+                    }
+                    new = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    // Simulate this particle.
+    if (new || !expired) {
+        // New particles are always simulated once before drawing?
+        if (simulate_particle(index, emitter_index, dt)) {
+            draws[index].instance_count = 1;
+            return;
+        } else {
+            // This particle just expired.
+            atomicAdd(num_particles, -1);
+            atomicAdd(state.emitters[emitter_index].num, -1);
+        }
+    }
+
+    draws[index].instance_count = 0;    
+}
+
