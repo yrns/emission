@@ -443,7 +443,8 @@ where
                 log::info!("Acquire {:?} : {:#?}", stages, barriers);
                 encoder.pipeline_barrier(stages, hal::memory::Dependencies::empty(), barriers);
             }
-            encoder.dispatch(MAX_PARTICLES / 1, 1, 1);
+            // TODO: coordinate workgroup size with shader
+            encoder.dispatch(MAX_PARTICLES / 64, 1, 1);
             {
                 let (stages, barriers) = gfx_release_barriers(ctx, &*buffers, None);
                 log::info!("Release {:?} : {:#?}", stages, barriers);
