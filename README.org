@@ -1,0 +1,3 @@
+* emission
+  An experiment with particles, compute shaders, rendy.
+** TODO Add support for Bevy once [[https://github.com/bevyengine/bevy/pull/139][139]] lands.
