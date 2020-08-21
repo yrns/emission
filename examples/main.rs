@@ -1,4 +1,4 @@
-use emission::{compute::*, render::*};
+use emission::*;
 use rendy::{
     command::Families,
     factory::{Config, Factory},
@@ -20,14 +20,31 @@ use rendy::{
 // #[cfg(feature = "vulkan")]
 type Backend = rendy::vulkan::Backend;
 
+struct Scene {
+    proj: glam::Mat4,
+    view: glam::Mat4,
+    emitters: Vec<Emitter>,
+}
+
+impl QueryProjView for Scene {
+    fn query_proj_view(&self) -> glam::Mat4 {
+        //glam::Mat4::identity()
+        self.proj * self.view
+    }
+}
+
+impl QueryEmitters for Scene {
+    fn query_emitters(&self) -> &Vec<Emitter> {
+        &self.emitters
+    }
+}
+
 fn run(
     event_loop: &mut EventsLoop,
     factory: &mut Factory<Backend>,
     families: &mut Families<Backend>,
     window: &Window,
 ) -> Result<(), failure::Error> {
-    let mut graph = build_graph(factory, families, window.clone());
-
     let started = std::time::Instant::now();
 
     let mut last_window_size = window.get_inner_size();
@@ -35,6 +52,47 @@ fn run(
 
     let mut frames = 0u64..;
     let mut elapsed = started.elapsed();
+
+    let size = window
+        .get_inner_size()
+        .unwrap()
+        .to_physical(window.get_hidpi_factor());
+    let aspect = size.width / size.height;
+
+    let e1 = Emitter {
+        transform: glam::Mat4::identity(),
+        gen: 1,
+        spawn_rate: 50.0,
+        lifetime: 0.5,
+        max_particles: 32,
+        spawn_offset_min: [-0.2, 0.0, 0.0, 0.0].into(),
+        spawn_offset_max: [0.2, 0.0, 0.0, 0.0].into(),
+        accel: [0.0, -4.0, 0.0, 0.0].into(),
+        scale: [1.0, 1.0, 1.0, 0.0].into(),
+        color: [1.0, 0.2, 0.3, 0.8].into(),
+        ..Default::default()
+    };
+
+    let e2 = Emitter {
+        transform: glam::Mat4::from_translation([0.0, 0.2, 0.0].into()),
+        spawn_offset_min: [-0.5, 0.0, 0.0, 0.0].into(),
+        spawn_offset_max: [0.5, 0.0, 0.0, 0.0].into(),
+        accel: [0.1, -2.0, 0.0, 0.0].into(),
+        color: [0.4, 0.2, 0.3, 0.5].into(),
+        ..e1
+    };
+
+    let mut scene = Scene {
+        proj: glam::Mat4::perspective_rh(3.1415 / 4.0, aspect as f32, 0.1, 200.0),
+        view: glam::Mat4::look_at_rh(
+            glam::vec3(0.0, 0.0, 10.0),
+            glam::Vec3::zero(),
+            glam::Vec3::unit_y(),
+        ),
+        emitters: vec![e1, e2],
+    };
+
+    let mut graph = build_graph(factory, families, window.clone(), &mut scene);
 
     for _ in &mut frames {
         factory.maintain(families);
@@ -48,14 +106,14 @@ fn run(
         if need_rebuild && last_window_size == new_window_size {
             need_rebuild = false;
             let started = std::time::Instant::now();
-            graph.dispose(factory, &());
+            graph.dispose(factory, &scene);
             println!("Graph disposed in: {:?}", started.elapsed());
-            graph = build_graph(factory, families, window.clone());
+            graph = build_graph(factory, families, window.clone(), &mut scene);
         }
 
         last_window_size = new_window_size;
 
-        graph.run(factory, families, &());
+        graph.run(factory, families, &scene);
 
         elapsed = started.elapsed();
         if elapsed >= std::time::Duration::new(5, 0) {
@@ -72,14 +130,14 @@ fn run(
         frames.start * 1_000_000_000 / elapsed_ns
     );
 
-    graph.dispose(factory, &mut ());
+    graph.dispose(factory, &scene);
     Ok(())
 }
 
 //#[cfg(any(feature = "dx12", feature = "metal", feature = "vulkan"))]
 fn main() {
     env_logger::Builder::from_default_env()
-        .filter_module("quads", log::LevelFilter::Trace)
+        .filter_module("emission", log::LevelFilter::Trace)
         .init();
 
     let config: Config = Default::default();
@@ -89,7 +147,7 @@ fn main() {
     let mut event_loop = EventsLoop::new();
 
     let window = WindowBuilder::new()
-        .with_title("Rendy example")
+        .with_title("emission example")
         .build(&event_loop)
         .unwrap();
 
@@ -110,10 +168,11 @@ fn build_graph(
     factory: &mut Factory<Backend>,
     families: &mut Families<Backend>,
     window: &Window,
-) -> Graph<Backend, ()> {
+    scene: &mut Scene,
+) -> Graph<Backend, Scene> {
     let surface = factory.create_surface(window);
 
-    let mut graph_builder = GraphBuilder::<Backend, ()>::new();
+    let mut graph_builder = GraphBuilder::<Backend, Scene>::new();
 
     // let emitters =
     //     graph_builder.create_buffer(MAX_EMITTERS as u64 * std::mem::size_of::<Emitter>() as u64);
@@ -172,7 +231,7 @@ fn build_graph(
     graph_builder.add_node(PresentNode::builder(&factory, surface, color).with_dependency(pass));
 
     let started = std::time::Instant::now();
-    let graph = graph_builder.build(factory, families, &()).unwrap();
+    let graph = graph_builder.build(factory, families, scene).unwrap();
     println!("Graph built in: {:?}", started.elapsed());
     graph
 }

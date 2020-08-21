@@ -1,3 +1,4 @@
+use crate::QueryEmitters;
 use once_cell::sync::Lazy;
 use rendy::{
     command::{
@@ -45,21 +46,21 @@ pub const MAX_PARTICLES: u32 = MAX_EMITTERS * 32;
 // type vec3 = [f32; 3];
 
 #[allow(non_camel_case_types)]
-type vec4 = [f32; 4];
+type vec4 = glam::Vec4;
 
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct Emitter {
-    pub position: vec4,
-    gen: u32,
-    spawn_rate: f32,
-    lifetime: f32,
-    max_particles: u32,
-    spawn_offset_min: vec4,
-    spawn_offset_max: vec4,
-    accel: vec4,
-    scale: vec4,
-    color: vec4,
+    pub transform: glam::Mat4,
+    pub gen: u32,
+    pub spawn_rate: f32,
+    pub lifetime: f32,
+    pub max_particles: u32,
+    pub spawn_offset_min: vec4,
+    pub spawn_offset_max: vec4,
+    pub accel: vec4,
+    pub scale: vec4,
+    pub color: vec4,
 }
 
 #[repr(C)]
@@ -119,7 +120,7 @@ where
 impl<B, T> Node<B, T> for ComputeNode<B>
 where
     B: hal::Backend,
-    T: ?Sized,
+    T: ?Sized + QueryEmitters,
 {
     type Capability = Compute;
     type Desc = ComputeNodeDesc;
@@ -135,7 +136,7 @@ where
         let mut mapped = self.stats.map(factory.device(), range.clone()).unwrap();
         unsafe {
             let read: &[Stats] = mapped.read(factory.device(), range).unwrap();
-            dbg!(read[0]);
+            log::trace!("particles: {}", read[0].particles);
         }
 
         std::slice::from_ref(&self.submit)
@@ -154,36 +155,12 @@ where
 pub fn initialize_buffers<B: hal::Backend>(
     factory: &mut Factory<B>,
     queue: QueueId,
+    emitter_data: &Vec<Emitter>,
     emitters: &Escape<Buffer<B>>,
     emitter_state: &Escape<Buffer<B>>,
     particles: &Handle<Buffer<B>>,
     indirect: &Handle<Buffer<B>>,
 ) -> Result<(), failure::Error> {
-    let e1 = Emitter {
-        position: [0.0, 0.0, 0.0, 0.0],
-        gen: 1,
-        spawn_rate: 50.0,
-        lifetime: 0.5,
-        max_particles: 32,
-        spawn_offset_min: [-0.2, 0.0, 0.0, 0.0],
-        spawn_offset_max: [0.2, 0.0, 0.0, 0.0],
-        accel: [0.0, -4.0, 0.0, 0.0],
-        scale: [1.0, 1.0, 1.0, 0.0],
-        color: [1.0, 0.2, 0.3, 0.8],
-        ..Default::default()
-    };
-
-    let e2 = Emitter {
-        position: [0.0, 0.2, 0.0, 0.0],
-        spawn_offset_min: [-0.5, 0.0, 0.0, 0.0],
-        spawn_offset_max: [0.5, 0.0, 0.0, 0.0],
-        accel: [0.1, -2.0, 0.0, 0.0],
-        color: [0.4, 0.2, 0.3, 0.5],
-        ..e1
-    };
-
-    let emitter_data = vec![e1, e2];
-
     unsafe {
         factory.upload_buffer(
             emitters,
@@ -265,7 +242,7 @@ pub struct ComputeNodeDesc;
 impl<B, T> NodeDesc<B, T> for ComputeNodeDesc
 where
     B: hal::Backend,
-    T: ?Sized,
+    T: ?Sized + QueryEmitters,
 {
     type Node = ComputeNode<B>;
 
@@ -306,7 +283,7 @@ where
         factory: &mut Factory<B>,
         family: &mut Family<B>,
         queue: usize,
-        _aux: &T,
+        aux: &T,
         buffers: Vec<NodeBuffer>,
         images: Vec<NodeImage>,
     ) -> Result<Self::Node, failure::Error> {
@@ -323,6 +300,8 @@ where
             index: queue,
             family: family.id(),
         };
+
+        let emitter_data = aux.query_emitters();
 
         let emitters = factory.create_buffer(
             BufferInfo {
@@ -343,6 +322,7 @@ where
         initialize_buffers(
             factory,
             queue,
+            emitter_data,
             &emitters,
             &emitter_state,
             &particles,

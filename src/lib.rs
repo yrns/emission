@@ -1,15 +1,15 @@
+pub use compute::*;
+pub use render::*;
+
 pub mod compute;
 pub mod render;
 
-//use rendy;
-
-// pub use self::compute::*;
-// pub use self::render::*;
-
-// is this even doable?
 pub trait QueryEmitters {
-    // impl Iterator<Item = (&Emitter, &Transform, &Mesh, &Texture)>?
-    fn query_emitters(&self) -> ();
+    fn query_emitters(&self) -> &Vec<Emitter>;
+}
+
+pub trait QueryProjView {
+    fn query_proj_view(&self) -> glam::Mat4;
 }
 
 #[cfg(test)]

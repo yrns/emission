@@ -1,3 +1,4 @@
+use crate::*;
 use once_cell::sync::Lazy;
 use rendy::{
     command::{DrawCommand, QueueId, RenderPassEncoder},
@@ -6,10 +7,10 @@ use rendy::{
         render::{Layout, PrepareResult, SimpleGraphicsPipeline, SimpleGraphicsPipelineDesc},
         BufferAccess, GraphContext, NodeBuffer, NodeImage,
     },
-    hal::{self},
+    hal::{self, Device as _},
     memory::Dynamic,
     mesh::PosTex,
-    resource::{Buffer, BufferInfo, DescriptorSetLayout, Escape, Handle},
+    resource::{Buffer, BufferInfo, DescriptorSet, DescriptorSetLayout, Escape, Handle},
     shader::{
         ShaderKind, ShaderSet, SourceLanguage, SourceShaderInfo, SpirvReflection, SpirvShader,
     },
@@ -50,7 +51,11 @@ static SHADERS: Lazy<rendy::shader::ShaderSetBuilder> = Lazy::new(|| {
 
 static SHADER_REFLECTION: Lazy<SpirvReflection> = Lazy::new(|| SHADERS.reflect().unwrap());
 
-use crate::compute::*;
+#[derive(Clone, Copy)]
+#[repr(C, align(16))]
+pub struct ProjView {
+    proj_view: glam::Mat4,
+}
 
 #[derive(Debug, Default)]
 pub struct RenderNodeDesc;
@@ -58,15 +63,16 @@ pub struct RenderNodeDesc;
 #[derive(Debug)]
 pub struct RenderNode<B: hal::Backend> {
     vertices: Escape<Buffer<B>>,
+    proj_view: Escape<Buffer<B>>,
     instance: Handle<Buffer<B>>,
     indirect: Handle<Buffer<B>>,
-    //descriptor_set: Escape<DescriptorSet<B>>,
+    descriptor_set: Escape<DescriptorSet<B>>,
 }
 
 impl<B, T> SimpleGraphicsPipelineDesc<B, T> for RenderNodeDesc
 where
     B: hal::Backend,
-    T: ?Sized,
+    T: ?Sized + QueryProjView,
 {
     type Pipeline = RenderNode<B>;
 
@@ -131,10 +137,10 @@ where
         ctx: &GraphContext<B>,
         factory: &mut Factory<B>,
         _queue: QueueId,
-        _aux: &T,
+        aux: &T,
         buffers: Vec<NodeBuffer>,
         images: Vec<NodeImage>,
-        _set_layouts: &[Handle<DescriptorSetLayout<B>>],
+        set_layouts: &[Handle<DescriptorSetLayout<B>>],
     ) -> Result<RenderNode<B>, failure::Error> {
         assert_eq!(buffers.len(), 2);
         assert!(images.is_empty());
@@ -142,81 +148,7 @@ where
         let instance = ctx.get_buffer(buffers[0].id).unwrap();
         let indirect = ctx.get_buffer(buffers[1].id).unwrap();
 
-        // let mut instance = factory
-        //     .create_buffer(
-        //         BufferInfo {
-        //             size: std::mem::size_of::<Particle>() as u64,
-        //             usage: hal::buffer::Usage::INDIRECT,
-        //         },
-        //         Dynamic,
-        //     )
-        //     .unwrap();
-
-        // let mut indirect = factory
-        //     .create_buffer(
-        //         BufferInfo {
-        //             size: std::mem::size_of::<DrawCommand>() as u64,
-        //             usage: hal::buffer::Usage::INDIRECT,
-        //         },
-        //         Dynamic,
-        //     )
-        //     .unwrap();
-
-        // unsafe {
-        //     factory.upload_visible_buffer(
-        //         &mut instance,
-        //         0,
-        //         &(0..1)
-        //             .map(|_| Particle {
-        //                 color: [0.0, 1.0, 0.0, 1.0],
-        //                 ..Default::default()
-        //             })
-        //             .collect::<Vec<_>>(),
-        //     )
-        // }?;
-
-        // unsafe {
-        //     factory.upload_visible_buffer(
-        //         &mut indirect,
-        //         0,
-        //         &(0..1)
-        //             .map(|_i| DrawCommand {
-        //                 vertex_count: 6,
-        //                 instance_count: 1, // this gets set to one in the shader
-        //                 first_vertex: 0,
-        //                 first_instance: 0,
-        //             })
-        //             .collect::<Vec<_>>(),
-        //     )
-        // }?;
-
-        // let mut indirect = factory
-        //     .create_buffer(
-        //         BufferInfo {
-        //             size: std::mem::size_of::<DrawCommand>() as u64 * DIVIDE as u64,
-        //             usage: hal::buffer::Usage::INDIRECT,
-        //         },
-        //         Dynamic,
-        //     )
-        //     .unwrap();
-
-        // unsafe {
-        //     factory
-        //         .upload_visible_buffer(
-        //             &mut indirect,
-        //             0,
-        //             &(0..DIVIDE)
-        //                 .map(|index| DrawCommand {
-        //                     vertex_count: 6,
-        //                     instance_count: PER_CALL,
-        //                     first_vertex: 0,
-        //                     first_instance: index * PER_CALL,
-        //                 })
-        //                 .collect::<Vec<_>>(),
-        //         )
-        //         .unwrap();
-        // }
-
+        // Quad vertices.
         let mut vertices = factory.create_buffer(
             BufferInfo {
                 size: std::mem::size_of::<PosTex>() as u64 * 6,
@@ -258,30 +190,47 @@ where
             )?;
         }
 
+        let mut proj_view = factory.create_buffer(
+            BufferInfo {
+                size: std::mem::size_of::<ProjView>() as u64,
+                usage: hal::buffer::Usage::UNIFORM,
+            },
+            Dynamic,
+        )?;
+
         // The panic on indexing out of bounds is actually more descriptive...
         //assert_eq!(set_layouts.len(), 1);
 
-        // let descriptor_set = factory.create_descriptor_set(set_layouts[0].clone())?;
+        let descriptor_set = factory.create_descriptor_set(set_layouts[0].clone())?;
 
-        // unsafe {
-        //     factory
-        //         .device()
-        //         .write_descriptor_sets(std::iter::once(hal::pso::DescriptorSetWrite {
-        //             set: descriptor_set.raw(),
-        //             binding: 0,
-        //             array_offset: 0,
-        //             descriptors: vec![hal::pso::Descriptor::Buffer(
-        //                 instance.raw(),
-        //                 Some(0)..Some(instance.size() as u64),
-        //             )],
-        //         }))
-        // }
+        unsafe {
+            factory
+                .device()
+                .write_descriptor_sets(std::iter::once(hal::pso::DescriptorSetWrite {
+                    set: descriptor_set.raw(),
+                    binding: 0,
+                    array_offset: 0,
+                    descriptors: vec![hal::pso::Descriptor::Buffer(
+                        proj_view.raw(),
+                        Some(0)..Some(proj_view.size() as u64),
+                    )],
+                }));
+
+            factory.upload_visible_buffer(
+                &mut proj_view,
+                0,
+                &[ProjView {
+                    proj_view: aux.query_proj_view(),
+                }],
+            )?;
+        }
 
         Ok(Self::Pipeline {
             vertices,
+            proj_view,
             indirect: indirect.clone(),
             instance: instance.clone(),
-            //descriptor_set,
+            descriptor_set,
         })
     }
 }
@@ -291,7 +240,7 @@ const STRIDE: u32 = std::mem::size_of::<DrawCommand>() as u32;
 impl<B, T> SimpleGraphicsPipeline<B, T> for RenderNode<B>
 where
     B: hal::Backend,
-    T: ?Sized,
+    T: ?Sized + QueryProjView,
 {
     type Desc = RenderNodeDesc;
 
@@ -308,18 +257,18 @@ where
 
     fn draw(
         &mut self,
-        _layout: &B::PipelineLayout,
+        layout: &B::PipelineLayout,
         mut encoder: RenderPassEncoder<'_, B>,
         _index: usize,
         _aux: &T,
     ) {
         unsafe {
-            // encoder.bind_graphics_descriptor_sets(
-            //     layout,
-            //     0,
-            //     std::iter::once(self.descriptor_set.raw()),
-            //     std::iter::empty::<u32>(),
-            // );
+            encoder.bind_graphics_descriptor_sets(
+                layout,
+                0,
+                std::iter::once(self.descriptor_set.raw()),
+                std::iter::empty::<u32>(),
+            );
 
             // encoder
             //     .bind_vertex_buffers(0, vec![(self.vertices.raw(), 0), (self.instance.raw(), 0)]);

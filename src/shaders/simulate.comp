@@ -13,8 +13,7 @@ struct LinearRange3 {
 };
 
 struct Emitter {
-    //mat4 transform;
-    vec4 position;
+    mat4 transform;
     // Generation is used to tell if an emitter has been replaced/updated.
     // Use entity id?
     uint gen;
@@ -51,7 +50,6 @@ struct DrawIndirectCommand {
 };
 
 struct Particle {
-    //mat4 local;
     vec4 color;
     vec4 position;
     vec4 velocity;    
@@ -106,7 +104,6 @@ void new_particle(uint index, uint emitter) {
     Emitter e = emitters[emitter];
     Particle p;
 
-    //p.local = e.transform;
     p.color = e.color;
 
     float t = state.emitters[emitter].t;
@@ -116,7 +113,7 @@ void new_particle(uint index, uint emitter) {
     vec3 r = vec3(r1, r2, r3);
     vec3 offset = mix(e.spawn_offset_min.xyz, e.spawn_offset_max.xyz, r);
     
-    p.position.xyz = e.position.xyz + offset;
+    p.position = e.transform * vec4(offset, 1.0);
     p.velocity.xyz = vec3(0.0);
     p.lifetime = e.lifetime;
     p.emitter = emitter;
