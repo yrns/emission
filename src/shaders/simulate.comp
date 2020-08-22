@@ -194,7 +194,6 @@ void main() {
     bool reset = state.emitters[emitter_index].reset == 1;
     if (reset) {
         particles[index].lifetime = 0.0;
-        particles[index].color = vec4(1.0, 0.0, 0.0, 1.0);
     }
 
     bool new = false;
@@ -207,6 +206,7 @@ void main() {
                 uint n = state.emitters[i].new;
                 if (n > 0 && atomicCompSwap(state.emitters[i].new, n, n - 1) == n) {
                     // Spawn new particle for this emitter.
+                    emitter_index = i;
                     new_particle(index, i);
                     if (expired) {
                         atomicAdd(state.emitters[i].num, 1);
