@@ -54,7 +54,8 @@ static SHADER_REFLECTION: Lazy<SpirvReflection> = Lazy::new(|| SHADERS.reflect()
 #[derive(Clone, Copy)]
 #[repr(C, align(16))]
 pub struct ProjView {
-    proj_view: glam::Mat4,
+    proj: Mat4,
+    view: Mat4,
 }
 
 #[derive(Debug, Default)]
@@ -216,13 +217,8 @@ where
                     )],
                 }));
 
-            factory.upload_visible_buffer(
-                &mut proj_view,
-                0,
-                &[ProjView {
-                    proj_view: aux.query_proj_view(),
-                }],
-            )?;
+            let (proj, view) = aux.query_proj_view();
+            factory.upload_visible_buffer(&mut proj_view, 0, &[ProjView { proj, view }])?;
         }
 
         Ok(Self::Pipeline {

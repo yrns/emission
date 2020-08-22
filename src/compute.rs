@@ -1,4 +1,4 @@
-use crate::QueryEmitters;
+use crate::{Mat4, QueryEmitters, Vec4};
 use once_cell::sync::Lazy;
 use rendy::{
     command::{
@@ -42,25 +42,19 @@ static SHADER_REFLECTION: Lazy<SpirvReflection> = Lazy::new(|| SHADERS.reflect()
 pub const MAX_EMITTERS: u32 = 2;
 pub const MAX_PARTICLES: u32 = MAX_EMITTERS * 32;
 
-// #[allow(non_camel_case_types)]
-// type vec3 = [f32; 3];
-
-#[allow(non_camel_case_types)]
-type vec4 = glam::Vec4;
-
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct Emitter {
-    pub transform: glam::Mat4,
+    pub transform: Mat4,
     pub gen: u32,
     pub spawn_rate: f32,
     pub lifetime: f32,
     pub max_particles: u32,
-    pub spawn_offset_min: vec4,
-    pub spawn_offset_max: vec4,
-    pub accel: vec4,
-    pub scale: vec4,
-    pub color: vec4,
+    pub spawn_offset_min: Vec4,
+    pub spawn_offset_max: Vec4,
+    pub accel: Vec4,
+    pub scale: Vec4,
+    pub color: Vec4,
 }
 
 #[repr(C)]
@@ -78,9 +72,9 @@ pub struct EmitterState {
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct Particle {
-    color: vec4,
-    position: vec4,
-    velocity: vec4,
+    color: Vec4,
+    position: Vec4,
+    velocity: Vec4,
     lifetime: f32,
     emitter: u32,
     gen: u32,

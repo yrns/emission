@@ -12,19 +12,27 @@ layout (location = 3) in vec4 p_position;
 // layout (location = 7) in uint gen;
 
 layout (set = 0, binding = 0) uniform ProjView {
-    mat4 proj_view;
+    mat4 proj;
+    mat4 view;
 };
 
 layout (location = 0) out vec4 color;
 
 void main() {
-    mat4 identity = mat4(
-        vec4(1.0, 0.0, 0.0, 0.0),
-        vec4(0.0, 1.0, 0.0, 0.0),
-        vec4(0.0, 0.0, 1.0, 0.0),
-        vec4(0.0, 0.0, 0.0, 1.0)
-    );
-
     color = p_color;
-    gl_Position = proj_view * vec4(position + p_position.xyz, 1.0);
+
+    // Spherical billboard. t is a transform with just the particle
+    // position. r is the inverse of the view rotation.
+    vec4 p = vec4(p_position.xyz, 1.0);
+    mat4 t = mat4(vec4(1.0, 0.0, 0.0, 0.0),
+                  vec4(0.0, 1.0, 0.0, 0.0),
+                  vec4(0.0, 0.0, 1.0, 0.0),
+                  p);
+
+    mat4 r = inverse(mat4(vec4(view[0].xyz, 0.0),
+                          vec4(view[1].xyz, 0.0),
+                          vec4(view[2].xyz, 0.0),
+                          vec4(0.0, 0.0, 0.0, 1.0)));
+
+    gl_Position = proj * view * t * r * vec4(position.xyz, 1.0);
 }

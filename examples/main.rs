@@ -21,15 +21,14 @@ use rendy::{
 type Backend = rendy::vulkan::Backend;
 
 struct Scene {
-    proj: glam::Mat4,
-    view: glam::Mat4,
+    proj: Mat4,
+    view: Mat4,
     emitters: Vec<Emitter>,
 }
 
 impl QueryProjView for Scene {
-    fn query_proj_view(&self) -> glam::Mat4 {
-        //glam::Mat4::identity()
-        self.proj * self.view
+    fn query_proj_view(&self) -> (Mat4, Mat4) {
+        (self.proj, self.view)
     }
 }
 
@@ -60,35 +59,50 @@ fn run(
     let aspect = size.width / size.height;
 
     let e1 = Emitter {
-        transform: glam::Mat4::identity(),
+        transform: Mat4::identity(),
         gen: 1,
         spawn_rate: 50.0,
-        lifetime: 0.5,
+        lifetime: 1.0,
         max_particles: 32,
-        spawn_offset_min: [-0.2, 0.0, 0.0, 0.0].into(),
-        spawn_offset_max: [0.2, 0.0, 0.0, 0.0].into(),
-        accel: [0.0, -4.0, 0.0, 0.0].into(),
+        spawn_offset_min: [-0.2, 0.0, 2.0, 0.0].into(),
+        spawn_offset_max: [0.2, 0.0, 4.0, 0.0].into(),
+        accel: [0.0, 10.0, 0.0, 0.0].into(),
         scale: [1.0, 1.0, 1.0, 0.0].into(),
         color: [1.0, 0.2, 0.3, 0.8].into(),
         ..Default::default()
     };
 
     let e2 = Emitter {
-        transform: glam::Mat4::from_translation([0.0, 0.2, 0.0].into()),
+        transform: Mat4::new_translation(&Vec3::new(0.0, 0.0, 0.0)),
         spawn_offset_min: [-0.5, 0.0, 0.0, 0.0].into(),
         spawn_offset_max: [0.5, 0.0, 0.0, 0.0].into(),
-        accel: [0.1, -2.0, 0.0, 0.0].into(),
-        color: [0.4, 0.2, 0.3, 0.5].into(),
+        accel: [0.0, 0.0, 0.0, 0.0].into(),
+        color: [0.2, 0.1, 0.2, 0.5].into(),
         ..e1
     };
 
+    let mut proj =
+        nalgebra::Perspective3::new(aspect as f32, std::f32::consts::PI / 4.0, 0.1, 200.0)
+            .to_homogeneous();
+    // Flip y for Vulkan NDC.
+    proj[(1, 1)] *= -1.0;
+
+    let view = nalgebra::Isometry3::look_at_rh(
+        &nalgebra::Point3::new(6.0, 6.0, -6.0),
+        &nalgebra::Point3::new(0.0, 0.0, 0.0),
+        &Vec3::y(),
+    )
+    .to_homogeneous();
+
     let mut scene = Scene {
-        proj: glam::Mat4::perspective_rh(3.1415 / 4.0, aspect as f32, 0.1, 200.0),
-        view: glam::Mat4::look_at_rh(
-            glam::vec3(0.0, 0.0, 10.0),
-            glam::Vec3::zero(),
-            glam::Vec3::unit_y(),
-        ),
+        proj,
+        view,
+        // proj: Mat4::perspective_rh(std::f32::consts::PI / 4.0, aspect as f32, 0.1, 200.0),
+        // view: Mat4::look_at_rh(
+        //     Vec3::new(2.0, 2.0, -6.0),
+        //     Vec3::zero(),
+        //     Vec3::new(0.0, 1.0, 0.0),
+        // ),
         emitters: vec![e1, e2],
     };
 
