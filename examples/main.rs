@@ -23,12 +23,13 @@ type Backend = rendy::vulkan::Backend;
 struct Scene {
     proj: Mat4,
     view: Mat4,
+    camera: Vec4,
     emitters: Vec<Emitter>,
 }
 
 impl QueryProjView for Scene {
-    fn query_proj_view(&self) -> (Mat4, Mat4) {
-        (self.proj, self.view)
+    fn query_proj_view(&self) -> (&Mat4, &Mat4, &Vec4) {
+        (&self.proj, &self.view, &self.camera)
     }
 }
 
@@ -62,11 +63,11 @@ fn run(
         transform: Mat4::identity(),
         gen: 1,
         spawn_rate: 50.0,
-        lifetime: 1.0,
+        lifetime: 5.0,
         max_particles: 32,
-        spawn_offset_min: [-0.2, 0.0, 2.0, 0.0].into(),
-        spawn_offset_max: [0.2, 0.0, 4.0, 0.0].into(),
-        accel: [0.0, 10.0, 0.0, 0.0].into(),
+        spawn_offset_min: [-0.2, 0.0, 0.0, 0.0].into(),
+        spawn_offset_max: [0.2, 0.0, 0.0, 0.0].into(),
+        accel: [0.0, 0.5, 0.0, 0.0].into(),
         scale: [1.0, 1.0, 1.0, 0.0].into(),
         color: [1.0, 0.2, 0.3, 0.8].into(),
         ..Default::default()
@@ -74,9 +75,9 @@ fn run(
 
     let e2 = Emitter {
         transform: Mat4::new_translation(&Vec3::new(0.0, 0.0, 0.0)),
-        spawn_offset_min: [-0.5, 0.0, 0.0, 0.0].into(),
-        spawn_offset_max: [0.5, 0.0, 0.0, 0.0].into(),
-        accel: [0.0, 0.0, 0.0, 0.0].into(),
+        spawn_offset_min: [-0.5, 0.0, 4.0, 0.0].into(),
+        spawn_offset_max: [0.5, 0.0, 10.0, 0.0].into(),
+        accel: [0.25, 0.0, 0.0, 0.0].into(),
         color: [0.2, 0.1, 0.2, 0.5].into(),
         ..e1
     };
@@ -87,8 +88,10 @@ fn run(
     // Flip y for Vulkan NDC.
     proj[(1, 1)] *= -1.0;
 
+    let camera = Vec4::new(1.0, 1.0, -6.0, 0.0);
+
     let view = nalgebra::Isometry3::look_at_rh(
-        &nalgebra::Point3::new(6.0, 6.0, -6.0),
+        &nalgebra::Point3::new(camera.x, camera.y, camera.z),
         &nalgebra::Point3::new(0.0, 0.0, 0.0),
         &Vec3::y(),
     )
@@ -97,6 +100,7 @@ fn run(
     let mut scene = Scene {
         proj,
         view,
+        camera,
         // proj: Mat4::perspective_rh(std::f32::consts::PI / 4.0, aspect as f32, 0.1, 200.0),
         // view: Mat4::look_at_rh(
         //     Vec3::new(2.0, 2.0, -6.0),
@@ -178,27 +182,22 @@ fn main() {
 }
 
 //#[cfg(any(feature = "dx12", feature = "metal", feature = "vulkan"))]
-fn build_graph(
-    factory: &mut Factory<Backend>,
-    families: &mut Families<Backend>,
+fn build_graph<B: hal::Backend>(
+    factory: &mut Factory<B>,
+    families: &mut Families<B>,
     window: &Window,
     scene: &mut Scene,
-) -> Graph<Backend, Scene> {
+) -> Graph<B, Scene> {
     let surface = factory.create_surface(window);
 
-    let mut graph_builder = GraphBuilder::<Backend, Scene>::new();
+    let mut graph_builder = GraphBuilder::<B, Scene>::new();
 
-    // let emitters =
-    //     graph_builder.create_buffer(MAX_EMITTERS as u64 * std::mem::size_of::<Emitter>() as u64);
-    // let emitter_state = graph_builder
-    //     .create_buffer(MAX_EMITTERS as u64 * std::mem::size_of::<EmitterState>() as u64);
     let particles =
         graph_builder.create_buffer(MAX_PARTICLES as u64 * std::mem::size_of::<Particle>() as u64);
+
     let indirect = graph_builder.create_buffer(
         MAX_PARTICLES as u64 * std::mem::size_of::<rendy::command::DrawCommand>() as u64,
     );
-
-    // TODO: particle count buffer
 
     let size = window
         .get_inner_size()
@@ -225,8 +224,6 @@ fn build_graph(
     let compute = graph_builder.add_node(
         ComputeNodeDesc
             .builder()
-            // .with_buffer(emitters)
-            // .with_buffer(emitter_state)
             .with_buffer(particles)
             .with_buffer(indirect),
     );

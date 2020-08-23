@@ -56,14 +56,10 @@ struct Particle {
     float lifetime;
     uint emitter;
     uint gen;
-    uint _pad;
+    float dist;
 };
 
 layout (local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
-
-// env for culling?
-// layout (std430, set = 0, binding = 0) uniform Env? {
-// };
 
 layout (std430, set = 0, binding = 0) readonly buffer Emitters {
     Emitter emitters[];
@@ -85,6 +81,13 @@ layout (set = 0, binding = 3) writeonly buffer DrawCommands {
 layout (set = 0, binding = 4) writeonly buffer Stats {
     uint num_particles;
     //uint debug1;
+};
+
+// uniform doesn't work?
+layout (set = 0, binding = 5) buffer ProjView {
+    mat4 proj;
+    mat4 view;
+    vec4 camera;
 };
 
 // rendy doesn't do push constants for compute
@@ -133,9 +136,18 @@ bool simulate_particle(uint index, uint emitter, float dt) {
     p.velocity.xyz += e.accel.xyz * dt;
     p.position += p.velocity * dt;
 
+    p.dist = distance(p.position.xyz, camera.xyz);
+    
     particles[index] = p;
 
     return p.lifetime > 0.0;
+}
+
+void swap(uint a, uint b) {
+    Particle tmp = particles[a];
+    //Particle tmp2 = particles[b];
+    particles[a] = particles[b];
+    particles[b] = tmp;
 }
 
 void main() {
@@ -222,16 +234,63 @@ void main() {
     // Simulate this particle.
     if (new || !expired) {
         // New particles are always simulated once before drawing?
-        if (simulate_particle(index, emitter_index, dt)) {
-            draws[index].instance_count = 1;
-            return;
-        } else {
+        if (!simulate_particle(index, emitter_index, dt)) {
             // This particle just expired.
             atomicAdd(num_particles, -1);
             atomicAdd(state.emitters[emitter_index].num, -1);
+            
+            // Sort dead particles to the back?
+            particles[index].dist = 0;
         }
     }
 
-    draws[index].instance_count = 0;    
+    barrier();
+
+    // A very slow incremental sort:
+    if (index % 2 == 0) {
+        float d1 = particles[index].dist;
+        float d2 = particles[index + 1].dist;
+        if (d2 > d1) {
+            swap(index, index + 1);
+        }
+    }
+
+    barrier();
+
+    if (index % 2 == 1 && index <= (particles.length() - 1)) {
+        float d1 = particles[index].dist;
+        float d2 = particles[index + 1].dist;
+        if (d2 > d1) {
+            swap(index, index + 1);
+        }
+    }
+    
+    // bitonic WIP:
+        
+    // uint N = particles.length();
+    // uint i = index;
+    
+    // for (uint k = 2; k <= N; k = 2 * k) {
+    //     for (uint j = k >> 1; j > 0; j = j >> 1) {
+    //         uint ixj = i ^ j;
+    //         if ((ixj) > i) {
+    //             float d1 = particles[i].dist;
+    //             float d2 = particles[ixj].dist;
+    //             if ((i & k) == 0 && d1 > d2 || (i & k) != 0 && d1 < d2) {
+    //                 swap(i, ixj);
+    //             }
+    //         }
+    //         barrier();
+    //     }
+    // }
+
+    barrier();
+
+    // Do this last or sort with particles?
+    if (particles[index].lifetime > 0) {
+        draws[index].instance_count = 1;
+    } else {
+        draws[index].instance_count = 0;
+    }
 }
 

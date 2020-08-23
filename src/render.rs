@@ -2,7 +2,7 @@ use crate::*;
 use once_cell::sync::Lazy;
 use rendy::{
     command::{DrawCommand, QueueId, RenderPassEncoder},
-    factory::Factory,
+    factory::{BufferState, Factory},
     graph::{
         render::{Layout, PrepareResult, SimpleGraphicsPipeline, SimpleGraphicsPipelineDesc},
         BufferAccess, GraphContext, NodeBuffer, NodeImage,
@@ -54,8 +54,9 @@ static SHADER_REFLECTION: Lazy<SpirvReflection> = Lazy::new(|| SHADERS.reflect()
 #[derive(Clone, Copy)]
 #[repr(C, align(16))]
 pub struct ProjView {
-    proj: Mat4,
-    view: Mat4,
+    pub proj: Mat4,
+    pub view: Mat4,
+    pub camera: Vec4,
 }
 
 #[derive(Debug, Default)]
@@ -64,9 +65,9 @@ pub struct RenderNodeDesc;
 #[derive(Debug)]
 pub struct RenderNode<B: hal::Backend> {
     vertices: Escape<Buffer<B>>,
-    proj_view: Escape<Buffer<B>>,
     instance: Handle<Buffer<B>>,
     indirect: Handle<Buffer<B>>,
+    proj_view: Escape<Buffer<B>>,
     descriptor_set: Escape<DescriptorSet<B>>,
 }
 
@@ -137,7 +138,7 @@ where
         self,
         ctx: &GraphContext<B>,
         factory: &mut Factory<B>,
-        _queue: QueueId,
+        queue: QueueId,
         aux: &T,
         buffers: Vec<NodeBuffer>,
         images: Vec<NodeImage>,
@@ -191,13 +192,36 @@ where
             )?;
         }
 
-        let mut proj_view = factory.create_buffer(
+        // We have to do all this twice since I couldn't get sharing
+        // the uniform buffer to work, either as a buffer stored in
+        // the graph or in the aux data. FIX:
+        let (proj, view, camera) = aux.query_proj_view();
+
+        let proj_view = factory.create_buffer(
             BufferInfo {
                 size: std::mem::size_of::<ProjView>() as u64,
-                usage: hal::buffer::Usage::UNIFORM,
+                usage: hal::buffer::Usage::UNIFORM | hal::buffer::Usage::TRANSFER_DST,
             },
             Dynamic,
         )?;
+
+        unsafe {
+            factory.upload_buffer(
+                &proj_view,
+                0,
+                &[ProjView {
+                    proj: *proj,
+                    view: *view,
+                    camera: *camera,
+                }],
+                None,
+                BufferState {
+                    queue,
+                    stage: hal::pso::PipelineStage::VERTEX_SHADER,
+                    access: hal::buffer::Access::SHADER_READ,
+                },
+            )?;
+        }
 
         // The panic on indexing out of bounds is actually more descriptive...
         //assert_eq!(set_layouts.len(), 1);
@@ -216,16 +240,13 @@ where
                         Some(0)..Some(proj_view.size() as u64),
                     )],
                 }));
-
-            let (proj, view) = aux.query_proj_view();
-            factory.upload_visible_buffer(&mut proj_view, 0, &[ProjView { proj, view }])?;
         }
 
         Ok(Self::Pipeline {
             vertices,
-            proj_view,
             indirect: indirect.clone(),
             instance: instance.clone(),
+            proj_view,
             descriptor_set,
         })
     }

@@ -1,4 +1,4 @@
-use crate::{Mat4, QueryEmitters, Vec4};
+use crate::{Mat4, ProjView, QueryEmitters, QueryProjView, Vec4};
 use once_cell::sync::Lazy;
 use rendy::{
     command::{
@@ -78,7 +78,7 @@ pub struct Particle {
     lifetime: f32,
     emitter: u32,
     gen: u32,
-    _pad: u32,
+    dist: f32,
 }
 
 #[repr(C)]
@@ -92,6 +92,7 @@ pub struct Stats {
 pub struct ComputeNode<B: hal::Backend> {
     emitters: Escape<Buffer<B>>,
     emitter_state: Escape<Buffer<B>>,
+    proj_view: Escape<Buffer<B>>,
     stats: Escape<Buffer<B>>,
     set_layout: Handle<DescriptorSetLayout<B>>,
     pipeline_layout: B::PipelineLayout,
@@ -114,7 +115,7 @@ where
 impl<B, T> Node<B, T> for ComputeNode<B>
 where
     B: hal::Backend,
-    T: ?Sized + QueryEmitters,
+    T: ?Sized + QueryEmitters + QueryProjView,
 {
     type Capability = Compute;
     type Desc = ComputeNodeDesc;
@@ -236,24 +237,12 @@ pub struct ComputeNodeDesc;
 impl<B, T> NodeDesc<B, T> for ComputeNodeDesc
 where
     B: hal::Backend,
-    T: ?Sized + QueryEmitters,
+    T: ?Sized + QueryEmitters + QueryProjView,
 {
     type Node = ComputeNode<B>;
 
     fn buffers(&self) -> Vec<BufferAccess> {
         vec![
-            // BufferAccess {
-            //     // This needs write access to appease rendy chain somehow.
-            //     access: hal::buffer::Access::SHADER_READ | hal::buffer::Access::SHADER_WRITE,
-            //     stages: hal::pso::PipelineStage::COMPUTE_SHADER,
-            //     usage: hal::buffer::Usage::STORAGE | hal::buffer::Usage::TRANSFER_DST,
-            // },
-            // BufferAccess {
-            //     access: hal::buffer::Access::SHADER_READ | hal::buffer::Access::SHADER_WRITE,
-            //     stages: hal::pso::PipelineStage::COMPUTE_SHADER,
-            //     usage: hal::buffer::Usage::STORAGE | hal::buffer::Usage::TRANSFER_DST,
-            // },
-
             // instance/particles
             BufferAccess {
                 access: hal::buffer::Access::SHADER_READ | hal::buffer::Access::SHADER_WRITE,
@@ -281,11 +270,8 @@ where
         buffers: Vec<NodeBuffer>,
         images: Vec<NodeImage>,
     ) -> Result<Self::Node, failure::Error> {
-        assert!(images.is_empty());
         assert_eq!(buffers.len(), 2);
-
-        // let emitters = ctx.get_buffer(buffers[0].id).unwrap();
-        // let emitter_state = ctx.get_buffer(buffers[1].id).unwrap();
+        assert!(images.is_empty());
 
         let particles = ctx.get_buffer(buffers[0].id).unwrap();
         let indirect = ctx.get_buffer(buffers[1].id).unwrap();
@@ -322,6 +308,34 @@ where
             &particles,
             &indirect,
         )?;
+
+        let (proj, view, camera) = aux.query_proj_view();
+
+        let mut proj_view = factory.create_buffer(
+            BufferInfo {
+                size: std::mem::size_of::<ProjView>() as u64,
+                usage: hal::buffer::Usage::STORAGE,
+            },
+            Dynamic,
+        )?;
+
+        unsafe {
+            factory.upload_visible_buffer(
+                &mut proj_view,
+                0,
+                &[ProjView {
+                    proj: *proj,
+                    view: *view,
+                    camera: *camera,
+                }],
+                // None,
+                // BufferState {
+                //     queue,
+                //     stage: hal::pso::PipelineStage::COMPUTE_SHADER,
+                //     access: hal::buffer::Access::SHADER_READ,
+                // },
+            )?;
+        }
 
         let stats = factory.create_buffer(
             BufferInfo {
@@ -392,6 +406,10 @@ where
                             Some(0)..Some(indirect.size()),
                         ),
                         hal::pso::Descriptor::Buffer(stats.raw(), Some(0)..Some(stats.size())),
+                        hal::pso::Descriptor::Buffer(
+                            proj_view.raw(),
+                            Some(0)..Some(proj_view.size()),
+                        ),
                     ],
                 }));
         }
@@ -431,6 +449,7 @@ where
         Ok(Self::Node {
             emitters,
             emitter_state,
+            proj_view,
             stats,
             set_layout,
             pipeline_layout,

@@ -15,7 +15,7 @@ pub trait QueryEmitters {
 }
 
 pub trait QueryProjView {
-    fn query_proj_view(&self) -> (Mat4, Mat4);
+    fn query_proj_view(&self) -> (&Mat4, &Mat4, &Vec4);
 }
 
 #[cfg(test)]

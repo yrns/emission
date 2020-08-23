@@ -14,6 +14,7 @@ layout (location = 3) in vec4 p_position;
 layout (set = 0, binding = 0) uniform ProjView {
     mat4 proj;
     mat4 view;
+    vec4 camera;
 };
 
 layout (location = 0) out vec4 color;
