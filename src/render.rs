@@ -2,7 +2,7 @@ use crate::*;
 use once_cell::sync::Lazy;
 use rendy::{
     command::{DrawCommand, QueueId, RenderPassEncoder},
-    factory::{BufferState, Factory},
+    factory::{BufferState, Factory, ImageState},
     graph::{
         render::{Layout, PrepareResult, SimpleGraphicsPipeline, SimpleGraphicsPipelineDesc},
         BufferAccess, GraphContext, NodeBuffer, NodeImage,
@@ -14,8 +14,10 @@ use rendy::{
     shader::{
         ShaderKind, ShaderSet, SourceLanguage, SourceShaderInfo, SpirvReflection, SpirvShader,
     },
+    texture::{image::ImageTextureConfig, Texture},
     util::types::vertex::VertexFormat,
 };
+use std::{fs::File, io::BufReader};
 
 static RENDER_VERTEX: Lazy<SpirvShader> = Lazy::new(|| {
     SourceShaderInfo::new(
@@ -69,6 +71,8 @@ pub struct RenderNode<B: hal::Backend> {
     indirect: Handle<Buffer<B>>,
     proj_view: Escape<Buffer<B>>,
     descriptor_set: Escape<DescriptorSet<B>>,
+    texture: Texture<B>,
+    texture_set: Escape<DescriptorSet<B>>,
 }
 
 impl<B, T> SimpleGraphicsPipelineDesc<B, T> for RenderNodeDesc
@@ -242,12 +246,67 @@ where
                 }));
         }
 
+        let (texture, texture_set) = {
+            let image_reader = BufReader::new(File::open(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/particle.png"
+            ))?);
+
+            let texture_builder = rendy::texture::image::load_from_image(
+                image_reader,
+                ImageTextureConfig {
+                    generate_mips: true,
+                    ..Default::default()
+                },
+            )?;
+
+            let texture = texture_builder
+                .build(
+                    ImageState {
+                        queue,
+                        stage: hal::pso::PipelineStage::FRAGMENT_SHADER,
+                        access: hal::image::Access::SHADER_READ,
+                        layout: hal::image::Layout::ShaderReadOnlyOptimal,
+                    },
+                    factory,
+                )
+                .unwrap();
+
+            let descriptor_set = factory
+                .create_descriptor_set(set_layouts[1].clone())
+                .unwrap();
+
+            unsafe {
+                factory.device().write_descriptor_sets(vec![
+                    hal::pso::DescriptorSetWrite {
+                        set: descriptor_set.raw(),
+                        binding: 0,
+                        array_offset: 0,
+                        descriptors: vec![hal::pso::Descriptor::Image(
+                            texture.view().raw(),
+                            hal::image::Layout::ShaderReadOnlyOptimal,
+                        )],
+                    },
+                    hal::pso::DescriptorSetWrite {
+                        set: descriptor_set.raw(),
+                        binding: 1,
+                        array_offset: 0,
+                        descriptors: vec![hal::pso::Descriptor::Sampler(texture.sampler().raw())],
+                    },
+                ]);
+            }
+
+            (texture, descriptor_set)
+        };
+
         Ok(Self::Pipeline {
             vertices,
             indirect: indirect.clone(),
             instance: instance.clone(),
             proj_view,
             descriptor_set,
+            texture,
+            texture_set,
         })
     }
 }
@@ -283,7 +342,7 @@ where
             encoder.bind_graphics_descriptor_sets(
                 layout,
                 0,
-                std::iter::once(self.descriptor_set.raw()),
+                vec![self.descriptor_set.raw(), self.texture_set.raw()],
                 std::iter::empty::<u32>(),
             );
 
