@@ -1,7 +1,11 @@
 #version 450
 
+// Make these emitter/specialization inputs.
+const uint PARAMS = 4;
+const bool SORTING = true;
+
 struct Param {
-    vec2 p[4];
+    vec2 p[PARAMS];
     float noise1;
     float noise2;
 };
@@ -107,11 +111,15 @@ float random(in vec2 st) {
 float interp_param(Param p, float t) {
     float t0 = 0.0;
     float v0 = p.p[0][1];
-    for (uint i = 0; i < 4; i++) {
+    for (uint i = 0; i < PARAMS; i++) {
         float t1 = p.p[i][0];
         float v1 = p.p[i][1];
         if (t < t1) {
-            return smoothstep(v0, v1, (t - t0) / (t1 - t0));
+            if (v0 == v1) {
+                return v1;
+            } else {
+                return smoothstep(v0, v1, (t - t0) / (t1 - t0));
+            }
         }
         t0 = t1;
         v0 = v1;
@@ -264,24 +272,26 @@ void main() {
     barrier();
     
     // bitonic depth sort
-    uint N = particles.length();
-    uint i = index;
-    
-    for (uint k = 2; k <= N; k = 2 * k) {
-        for (uint j = k >> 1; j > 0; j = j >> 1) {
-            uint ixj = i ^ j;
-            if ((ixj) > i) {
-                float d1 = particles[i].dist;
-                float d2 = particles[ixj].dist;
-                if ((i & k) == 0 && d1 < d2 || (i & k) != 0 && d1 > d2) {
-                    swap(i, ixj);
+    if (SORTING) {
+        uint N = particles.length();
+        uint i = index;
+
+        for (uint k = 2; k <= N; k = 2 * k) {
+            for (uint j = k >> 1; j > 0; j = j >> 1) {
+                uint ixj = i ^ j;
+                if ((ixj) > i) {
+                    float d1 = particles[i].dist;
+                    float d2 = particles[ixj].dist;
+                    if ((i & k) == 0 && d1 < d2 || (i & k) != 0 && d1 > d2) {
+                        swap(i, ixj);
+                    }
                 }
+                barrier();
             }
             barrier();
         }
         barrier();
     }
-    barrier();
 
     // Do this last or sort with particles?
     if (particles[index].lifetime > 0) {

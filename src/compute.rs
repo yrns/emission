@@ -40,7 +40,7 @@ static SHADER_REFLECTION: Lazy<SpirvReflection> = Lazy::new(|| SHADERS.reflect()
 
 // make these dynamic, see ensure_buffer in amethyst
 pub const MAX_EMITTERS: u32 = 2;
-pub const MAX_PARTICLES: u32 = MAX_EMITTERS * 64;
+pub const MAX_PARTICLES: u32 = MAX_EMITTERS * 1024;
 
 #[repr(C, align(16))]
 #[derive(Copy, Clone)]
