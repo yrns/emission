@@ -8,7 +8,9 @@ use rendy::{
         Graph, GraphBuilder, NodeDesc,
     },
     hal,
-    wsi::winit::{EventsLoop, Window, WindowBuilder},
+    wsi::winit::{
+        Event, EventsLoop, KeyboardInput, VirtualKeyCode, Window, WindowBuilder, WindowEvent,
+    },
 };
 
 // #[cfg(feature = "dx12")]
@@ -63,7 +65,7 @@ fn run(
         transform: Mat4::identity(),
         gen: 1,
         spawn_rate: 50.0,
-        lifetime: 5.0,
+        lifetime: 2.0,
         max_particles: 32,
         spawn_offset_min: [-0.2, 0.0, 0.0, 0.0].into(),
         spawn_offset_max: [0.2, 0.0, 0.0, 0.0].into(),
@@ -114,7 +116,31 @@ fn run(
 
     for _ in &mut frames {
         factory.maintain(families);
-        event_loop.poll_events(|_| ());
+        let mut close_requested = false;
+        event_loop.poll_events(|e| match e {
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            }
+            | Event::WindowEvent {
+                event:
+                    WindowEvent::KeyboardInput {
+                        input:
+                            KeyboardInput {
+                                virtual_keycode: Some(VirtualKeyCode::Escape),
+                                ..
+                            },
+                        ..
+                    },
+                ..
+            } => close_requested = true,
+            _ => (),
+        });
+
+        if close_requested {
+            break;
+        }
+
         let new_window_size = window.get_inner_size();
 
         if last_window_size != new_window_size {
@@ -134,9 +160,9 @@ fn run(
         graph.run(factory, families, &scene);
 
         elapsed = started.elapsed();
-        if elapsed >= std::time::Duration::new(5, 0) {
-            break;
-        }
+        // if elapsed >= std::time::Duration::new(5, 0) {
+        //     break;
+        // }
     }
 
     let elapsed_ns = elapsed.as_secs() * 1_000_000_000 + elapsed.subsec_nanos() as u64;
@@ -169,7 +195,7 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
-    event_loop.poll_events(|_| ());
+    //event_loop.poll_events(|_| ());
 
     run(&mut event_loop, &mut factory, &mut families, &window).unwrap();
     log::debug!("Done");

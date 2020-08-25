@@ -1,15 +1,15 @@
 #version 450
 
-// TODO: Add more interesting functions of time for particle
-// parameters like parametric curves, noise, randomness.
-struct LinearRange {
-    float start;
-    float end;
+struct Param {
+    vec2 p[4];
+    float noise1;
+    float noise2;
 };
 
-struct LinearRange3 {
-    vec3 start;
-    vec3 end;
+struct Param3 {
+    Param p0;
+    Param p1;
+    Param p2;
 };
 
 struct Emitter {
@@ -17,7 +17,7 @@ struct Emitter {
     // Generation is used to tell if an emitter has been replaced/updated.
     // Use entity id?
     uint gen;
-    float spawn_rate;    
+    float spawn_rate;
     float lifetime;
     // max particles can't change then?
     uint max_particles;
@@ -28,6 +28,7 @@ struct Emitter {
     vec4 accel;
     vec4 scale;
     vec4 color;
+    Param alpha;
     //uint _pad;
 };
 
@@ -80,7 +81,7 @@ layout (set = 0, binding = 3) writeonly buffer DrawCommands {
 
 layout (set = 0, binding = 4) writeonly buffer Stats {
     uint num_particles;
-    //uint debug1;
+    float debug1;
 };
 
 // uniform doesn't work?
@@ -101,6 +102,21 @@ layout (set = 0, binding = 5) buffer ProjView {
 
 float random(in vec2 st) {
     return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
+}
+
+float interp_param(Param p, float t) {
+    float t0 = 0.0;
+    float v0 = p.p[0][1];
+    for (uint i = 0; i < 4; i++) {
+        float t1 = p.p[i][0];
+        float v1 = p.p[i][1];
+        if (t < t1) {
+            return smoothstep(v0, v1, (t - t0) / (t1 - t0));
+        }
+        t0 = t1;
+        v0 = v1;
+    }
+    return v0;
 }
 
 void new_particle(uint index, uint emitter) {
@@ -132,7 +148,8 @@ bool simulate_particle(uint index, uint emitter, float dt) {
     p.lifetime -= dt;
     
     float t = 1.0 - max(p.lifetime / e.lifetime, 0.0);    
-    p.color = vec4(e.color.rgb, smoothstep(e.color.a, 0.0, t));    
+    //p.color = vec4(e.color.rgb, smoothstep(e.color.a, 0.0, t));
+    p.color = vec4(e.color.rgb, e.color.a * interp_param(e.alpha, t));
     p.velocity.xyz += e.accel.xyz * dt;
     p.position += p.velocity * dt;
 
@@ -173,7 +190,7 @@ void main() {
                 // Unset this from last run.
                 state.emitters[index].reset = 0;
             }
-            
+
             // Determine the number of new particles to spawn for each emitter.
             float last_spawn = state.emitters[index].last_spawn + dt;
             // Turn particles per second into seconds per particle.

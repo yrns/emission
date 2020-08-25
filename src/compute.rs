@@ -40,9 +40,27 @@ static SHADER_REFLECTION: Lazy<SpirvReflection> = Lazy::new(|| SHADERS.reflect()
 
 // make these dynamic, see ensure_buffer in amethyst
 pub const MAX_EMITTERS: u32 = 2;
-pub const MAX_PARTICLES: u32 = MAX_EMITTERS * 32;
+pub const MAX_PARTICLES: u32 = MAX_EMITTERS * 64;
 
-#[repr(C)]
+#[repr(C, align(16))]
+#[derive(Copy, Clone)]
+pub struct Param {
+    p: [[f32; 2]; 4],
+    noise1: f32,
+    noise2: f32,
+}
+
+impl Default for Param {
+    fn default() -> Self {
+        Self {
+            p: [[0.0, 0.0], [0.4, 1.0], [0.6, 1.0], [1.0, 0.0]],
+            noise1: 42.0,
+            noise2: 43.0,
+        }
+    }
+}
+
+#[repr(C, align(16))]
 #[derive(Copy, Clone, Default)]
 pub struct Emitter {
     pub transform: Mat4,
@@ -55,6 +73,7 @@ pub struct Emitter {
     pub accel: Vec4,
     pub scale: Vec4,
     pub color: Vec4,
+    pub alpha: Param,
 }
 
 #[repr(C)]
@@ -81,11 +100,11 @@ pub struct Particle {
     dist: f32,
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Copy, Clone, Default, Debug)]
 pub struct Stats {
     particles: u32,
-    //debug1: u32,
+    debug1: f32,
 }
 
 #[derive(Debug)]
@@ -131,7 +150,7 @@ where
         let mut mapped = self.stats.map(factory.device(), range.clone()).unwrap();
         unsafe {
             let read: &[Stats] = mapped.read(factory.device(), range).unwrap();
-            log::trace!("particles: {}", read[0].particles);
+            log::trace!("particles: {} debug: {}", read[0].particles, read[0].debug1);
         }
 
         std::slice::from_ref(&self.submit)
@@ -150,7 +169,7 @@ where
 pub fn initialize_buffers<B: hal::Backend>(
     factory: &mut Factory<B>,
     queue: QueueId,
-    emitter_data: &Vec<Emitter>,
+    emitter_data: &[Emitter],
     emitters: &Escape<Buffer<B>>,
     emitter_state: &Escape<Buffer<B>>,
     particles: &Handle<Buffer<B>>,
